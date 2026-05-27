@@ -4,6 +4,7 @@
 
 > **声明**  
 > 本项目源码设置为**私有（Private）**，本页面仅用于功能演示、架构展示及技术交流。
+> 已经实现部署，目前有300多学生使用，http://39.96.180.126:5000/communication（体验地址，账号密码：admin）
 <img width="1920" height="905" alt="image" src="https://github.com/user-attachments/assets/fb5e3c4d-07de-4d31-9097-fa97b943a68b" />
 
 ## 🧰 核心技术栈
