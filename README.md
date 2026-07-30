@@ -2,118 +2,299 @@
 基于大模型与RAG的协作式编程学习辅助平台，支持python编码，同伴交流、AI问答、知识库检索等。
 # 基于 RAG 架构的智能协作与元认知辅助系统
 
-> **声明**  
-> 本项目源码设置为**私有（Private）**，本页面仅用于功能演示、架构展示及技术交流。
-> 已经实现部署，目前有300多学生使用，http://39.96.180.126:5000/communication（体验地址，账号密码：admin）
+> **体验地址**  
+> 已经实现部署，http://39.96.180.126:5000/communication（体验地址，账号密码：admin）
 <img width="1920" height="905" alt="image" src="https://github.com/user-attachments/assets/fb5e3c4d-07de-4d31-9097-fa97b943a68b" />
 
-## 🧰 核心技术栈
+## 一、总体架构概览
 
-| 模块 | 技术 |
+```
+┌──────────────────────────────────────────────────────────┐
+│                  客户端层 (Vue 3 SPA)                       │
+│   Element Plus UI  ·  Vue Router  ·  Axios  ·  WebSocket  │
+└──────────────────────┬───────────────────────────────────┘
+                       │ HTTP REST (JSON)  /  WebSocket
+                       ▼
+┌──────────────────────────────────────────────────────────┐
+│                反向代理层 (Vite Dev Server)                  │
+│          开发：proxy /api → localhost:8000                  │
+└──────────────────────┬───────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────┐
+│                  API 服务层 (FastAPI + Uvicorn)              │
+│   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐  │
+│   │ Auth     │ │ Room     │ │ Message  │ │ Upload     │  │
+│   │ 路由     │ │ 路由     │ │ 路由     │ │ 路由       │  │
+│   └──────────┘ └──────────┘ └──────────┘ └────────────┘  │
+│   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐  │
+│   │ Agent    │ │ Knowledge│ │ Semantic │ │ Memory     │  │
+│   │ 路由     │ │ 路由     │ │ 路由     │ │ 路由       │  │
+│   └──────────┘ └──────────┘ └──────────┘ └────────────┘  │
+└──────────┬───────────────────────────────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────────────────────────────┐
+│                  业务逻辑层 (Services)                       │
+│   auth_service  ·  room_service  ·  message_service        │
+│   rag_service  ·  embedding_service  ·  memory_service     │
+│   semantic_service  ·  summary_service  ·  document_service│
+└──────────┬───────────────────────────────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────────────────────────────┐
+│                   数据与基础设施层                           │
+│  ┌─────────┐  ┌──────────┐  ┌────────┐  ┌────────────┐  │
+│  │ SQLite  │  │  FAISS   │  │ 文件   │  │  Sentence  │  │
+│  │ (主数据库)│  │ 向量索引  │  │ 存储   │  │Transformer │  │
+│  └─────────┘  └──────────┘  └────────┘  └────────────┘  │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │        外部 LLM API (火山引擎 ARK 大模型)              │  │
+│  │   doubao-seed-2-1-turbo · deepseek-v4-pro · glm-4  │  │
+│  └────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 二、前端技术栈 (Vue 3)
+
+| 类别 | 技术选型 | 说明 |
+|------|----------|------|
+| **框架** | Vue 3 + Composition API | `<script setup>` 语法，响应式开发 |
+| **构建工具** | Vite 4 | 开发 HMR、生产构建、代理转发 |
+| **路由** | Vue Router 4 | createWebHistory 模式，路由守卫实现登录拦截 |
+| **状态管理** | 组件内状态 (ref/reactive) + localStorage | 无 Pinia/Vuex，轻量设计 |
+| **UI 组件库** | Element Plus 2 | 全局注册完整图标库 |
+| **HTTP 客户端** | Axios 1 | 请求拦截器注入 JWT，响应拦截器处理 401 |
+| **实时通信** | 原生 WebSocket | 自定义重连机制（指数退避，最多 10 次） |
+| **样式方案** | Scoped CSS | 组件级样式隔离 |
+
+### 核心前端模块
+
+```
+src/
+├── main.js                 # 应用入口：createApp + 注册 Element Plus + 路由
+├── App.vue                 # 根组件：<router-view> + 全局重置样式
+├── api/                    # Axios 封装 + 各模块 API
+│   ├── index.js            # Axios 实例（拦截器 + JWT）
+│   ├── auth.js / room.js / message.js
+│   ├── agent.js / knowledge.js / user.js / semantic.js
+├── router/index.js         # 路由配置 + 登录守卫
+├── views/                  # 页面视图
+│   ├── Login.vue / Register.vue
+│   ├── JoinRoom.vue / ChatRoom.vue
+│   ├── Setting.vue / UserManage.vue / RoomManage.vue
+├── components/             # 通用组件
+│   ├── KnowledgeUpload.vue
+│   └── SemanticSetting.vue
+└── websocket/socket.js     # WebSocket 客户端封装
+```
+
+---
+
+## 三、后端技术栈 (FastAPI + Python 3.13)
+
+| 类别 | 技术选型 | 说明 |
+|------|----------|------|
+| **语言** | Python 3.13+ | 类型注解支持完善 |
+| **Web 框架** | FastAPI + Uvicorn | 异步高性能，自动 OpenAPI 文档 |
+| **ORM** | SQLAlchemy 2.0 | DeclarativeBase 声明式映射 |
+| **数据库** | SQLite | 嵌入式关系数据库，零运维成本 |
+| **认证** | JWT (python-jose + bcrypt) | HS256 签名，24h 过期 |
+| **LLM 集成** | LangChain (langchain-openai) | ChatOpenAI 接口对接火山引擎 ARK |
+| **向量数据库** | FAISS (IndexFlatIP) | 内积相似度搜索，384 维 |
+| **文本嵌入** | Sentence-Transformers | BAAI/bge-small-zh-v1.5 本地模型 |
+| **文档解析** | LangChain Loaders | 支持 PDF、DOCX、TXT |
+| **任务调度** | APScheduler | 定时生成房间对话摘要（20 分钟/次） |
+| **数据导出** | Openpyxl | Excel 格式导出聊天记录（含图片） |
+| **跨域** | CORSMiddleware | 允许 3000/3004/5173 端口 |
+
+### 后端目录结构
+
+```
+backend/
+├── .env                             # 环境变量（密钥、API Key、模型配置）
+├── requirements.txt                 # Python 依赖清单
+├── app/
+│   ├── main.py                      # FastAPI 入口：生命周期、中间件、路由注册
+│   ├── core/
+│   │   ├── config.py                # 环境配置读取
+│   │   ├── security.py              # JWT 编解码、密码哈希
+│   │   ├── dependencies.py          # FastAPI 依赖注入（get_current_user）
+│   │   └── exceptions.py            # 自定义异常处理器
+│   ├── database/
+│   │   ├── database.py              # SQLAlchemy 引擎 + Session 工厂
+│   │   └── models.py                # 核心 ORM 模型（User, ChatRoom, Message 等）
+│   ├── schemas/                     # Pydantic 请求/响应模型
+│   ├── routers/                     # 10 个 API 路由模块
+│   ├── services/                    # 业务逻辑层（9 个 Service）
+│   ├── agent/                       # 认知智能体
+│   ├── agents/                      # 元认知智能体
+│   ├── rag/                         # RAG 检索模块（FAISS 索引 + 检索器）
+│   ├── llm/                         # LLM 调用工厂
+│   ├── models/                      # 知识库 & 语义分析 ORM 模型
+│   ├── semantic/                    # 语义检测器 + 触发器
+│   ├── websocket/                   # WebSocket 端点 + 连接管理器
+│   └── tasks/                       # APScheduler 定时任务
+├── data/
+│   ├── app.db                       # SQLite 数据库文件
+│   └── faiss/                       # FAISS 序列化索引
+├── storage/knowledge_files/         # 上传的知识库文档
+└── uploads/                         # 聊天上传的图片
+```
+
+---
+
+## 四、核心架构模式
+
+### 4.1 RAG 检索增强生成流水线
+
+```
+用户问题
+   │
+   ▼
+┌─────────────────────┐
+│  向量化问题          │  ← SentenceTransformer (384维)
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  FAISS 相似度搜索   │  ← IndexFlatIP，top_k=5
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  检索知识块内容      │  ← 从 KnowledgeChunk 表获取
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  拼接 LLM Prompt    │  ← 【知识库参考】段落 + 历史 + 系统提示
+└────────┬────────────┘
+         ▼
+┌─────────────────────┐
+│  LLM 生成回答       │  ← doubao-seed-2-1-turbo
+└─────────────────────┘
+```
+
+**关键参数**：
+- 文本块大小：500 字符，重叠 100 字符
+- 嵌入维度：384
+- 检索数量：top_k = 5
+- 相似度算法：内积 (Inner Product)
+
+### 4.2 多智能体架构
+
+| 智能体 | 触发方式 | 模型 | 功能 |
+|--------|----------|------|------|
+| **认知智能体** (Cognitive Agent) | 聊天输入 `@认知智能体` | doubao-seed-2-1-turbo-260628 | 基于 RAG 知识库回答问题，结合房间记忆与对话历史 |
+| **元认知智能体** (Metacognitive Agent) | "举手"按钮 / 语义关键词命中 | deepseek-v4-pro-260425 | 高阶分析，引导学习者反思与深度思考 |
+| **摘要智能体** (Summary Agent) | APScheduler 定时触发（20 分钟） | glm-4-7-251222 | 自动生成房间对话摘要，存入 RoomMemory |
+
+### 4.3 语义关键词检测系统
+
+```
+聊天消息
+   │
+   ▼
+┌─────────────────────────────┐
+│  SentenceTransformer 编码   │  ← 生成 384 维向量
+└─────────────┬───────────────┘
+              ▼
+┌─────────────────────────────┐
+│  与所有关键词向量计算余弦相似度│  ← 阈值 0.6
+└─────────────┬───────────────┘
+              ▼
+       ┌──────┴──────┐
+       ▼              ▼
+    匹配成功        未匹配
+       │              │
+       ▼              ▼
+  触发元认知        正常处理
+  智能体干预
+```
+
+### 4.4 REST + WebSocket 混合通信
+
+- **REST API**（前缀 `/api/*`）：认证、房间管理、消息查询、知识库 CRUD、智能体触发
+- **WebSocket**（`/ws/chat/{room_id}`）：
+  - 实时文本/图片/智能体消息推送
+  - 系统通知（用户加入/离开）
+  - 智能体输入状态实时推送
+  - 断线自动重连（最多 10 次，间隔从 1s 递增到 10s）
+
+### 4.5 实验支撑设计
+
+- 房间编码规则：001~009 = 实验组（PBL 提示词），010~016 = 对照组（通用提示词）
+- Agent Prompt 按 `agent_type` 动态加载，支持运行时上传更新
+- 支持 300+ 学生并发实验
+
+---
+
+## 五、数据模型概览
+
+### 5.1 核心业务表
+
+| 表名 | 主要字段 | 说明 |
+|------|----------|------|
+| `users` | id, username (唯一索引), password_hash, created_time | 用户账户 |
+| `chat_rooms` | id, room_code (唯一索引), creator_id, status, created_time | 聊天房间 |
+| `room_members` | id, room_id, user_id, join_time, is_online | 房间成员 |
+| `messages` | id, room_id, user_id, username, content, message_type(text/image/agent), created_time | 聊天消息 |
+| `agent_prompts` | id, agent_type (唯一), prompt_content, filename, version | 智能体系统提示词 |
+| `room_memory` | id, room_id (唯一), summary, updated_time | 房间长期摘要记忆 |
+
+### 5.2 知识库向量表
+
+| 表名 | 说明 |
 |------|------|
-| 后端框架 | Python / Flask（轻量级高并发架构） |
-| 大语言模型 | Kimi-k2-250905 / Doubao-seed-character / GLM-4（通过 OpenAI SDK 适配） |
-| 向量数据库 | FAISS（高效向量相似度检索，384 维 L2 索引） |
-| 本地嵌入模型 | Sentence-Transformers `paraphrase-multilingual-MiniLM-L12-v2`（本地加载，保护隐私） |
-| 数据持久化 | SQLite（用户/消息记录） & Openpyxl（结构化聊天记录导出，含图片嵌入） |
-| 多线程 | Python `threading`（后台总结线程、日志清理线程、聊天记录清理线程） |
+| `knowledge_files` | 上传的知识文档元信息 |
+| `knowledge_chunks` | 文档分块后的文本片段 |
+| `knowledge_embeddings` | 384 维向量嵌入（JSON 存储） |
+| `semantic_keywords` | 语义检测关键词 |
+| `semantic_keyword_embeddings` | 关键词向量 |
+| `semantic_analysis_config` | 语义分析间隔配置 |
 
 ---
 
-## 1. 系统架构展示
+## 六、安全设计
 
-### 1.1 RAG（检索增强生成）工作流
-
-本项目实现了完整的 RAG 闭环，有效解决了大模型"幻觉"问题。
-
-文档（`.docx` / `.txt`）上传后，系统自动执行：
-
-1. **文本分块**（chunk_size=300，overlap=50，滑动窗口切割）
-2. **本地向量化**（MiniLM-L12-v2 模型，生成 384 维向量）
-3. **写入 FAISS 索引** + **SQLite 持久化**
-4. 用户提问时，先向 FAISS 检索 Top-K 相关片段，拼接为 `【知识库参考】` 追加到 Prompt 中，再调用大模型生成回答
-
-> 检索与问答均发生在本地嵌入层，向量化过程不依赖任何外部 API，保障数据安全。
-
+- **密码保护**：bcrypt 哈希存储，全程不存明文
+- **JWT 鉴权**：HS256 签名，24 小时有效期，Bearer Token 传输
+- **请求拦截**：Axios 拦截器自动注入 Token，401 自动清除并跳转登录
+- **CSRF 防护**：Token 非 Cookie 存储，非浏览器自动携带
+- **CORS 白名单**：仅允许指定前端域名跨域
+- **文件上传限制**：仅允许图片类型，存储于独立目录
 
 ---
 
-### 1.2 多线程智能体（Agent）逻辑
+## 七、部署架构
 
-系统通过 `threading` 实现三条后台守护线程，确保主请求链路不被阻塞：
+```
+┌────────────────────────────────────────┐
+│            Linux 服务器 (39.96.180.126)  │
+│                                          │
+│  ┌──────────────┐  ┌─────────────────┐  │
+│  │  Nginx/其他   │  │  uvicorn 进程    │  │
+│  │  反向代理     │─▶│  (FastAPI)      │  │
+│  │  :5000        │  │  :8000          │  │
+│  └──────────────┘  └─────────────────┘  │
+│                     ┌─────────────────┐  │
+│                     │  静态文件服务     │  │
+│                     │  (Vite 构建输出)  │  │
+│                     └─────────────────┘  │
+└────────────────────────────────────────┘
+```
 
-| 线程 | 职责 | 触发间隔 |
-|------|------|---------|
-| `summary_worker` | 定期扫描所有活跃聊天室，调用**元认知智能体**生成对话总结 | 可动态配置（默认 60 秒） |
-| `chat_db_cleaner_worker` | 删除数据库中超过 48 小时的聊天记录 | 每小时 |
-| `log_cleaner_worker` | 当日志文件超过 5MB 时自动清空 | 每小时 |
-
-启动时还会从数据库恢复最近 12 小时的聊天记录到内存，实现**重启不丢消息**。
-
-
----
-
-## 2. 功能演示
-
-### 🎬 功能一：AI 编程问答（RAG 增强）
-
-**特点：** 用户在编程学习页面发起提问，系统先检索知识库 Top-2 相关片段，拼接为上下文后调用 `Kimi-k2-250905` 生成回答；支持多轮对话历史记忆（按用户 ID 维护独立 history）。
-
-**演示重点：** 提问时 AI 回答中出现 `【知识库参考】` 引用内容，体现 RAG 检索效果。
-
-<img width="1915" height="918" alt="image" src="https://github.com/user-attachments/assets/8dcb56b3-6faf-46a4-8cf2-4d3b50cd4456" />
-
+- **无容器化**：未使用 Docker，手动部署
+- **开发模式**：`uvicorn app.main:app --reload`
+- **前端构建**：`vite build` → `dist/` 目录
 
 ---
 
-### 🎬 功能二：主动引导辅助
+## 八、关键技术亮点
 
-**特点：** 用户点击"举手"按钮触发 **认知** 智能体，系统也可以根据**房间号自动匹配不同 Prompt 策略**（例如：实验组 001-009 使用 PBL 引导提示词，对照组 010-016 使用通用提示词），结合当前聊天上下文和知识库，调用 `glm-4-7-251222` 生成针对性引导回复，并在回复中 `@` 触发用户。
-
-**演示重点：** 点击举手按钮 → AI 针对当前上下文给出个性化引导性回复，而非直接给答案。
-
-<img width="1920" height="905" alt="f4f59705c23d1a10c7d2705c2fd4975a" src="https://github.com/user-attachments/assets/e11dda71-0feb-40e2-9229-d67e3fe28db9" />
-
-<img width="1901" height="915" alt="image" src="https://github.com/user-attachments/assets/5df9d307-53f6-457d-b2c4-a8c0aa2f77e7" />
----
-
-### 🎬 功能三：元认知智能总结
-
-**特点：** 后台线程 ** 根据管理员配置的时间间隔，自动抓取聊天室最近 X 条消息，结合知识库检索，调用 `doubao-seed-character-251128` 生成阶段性学习总结并推送至聊天室。总结仅在有新消息时触发，避免重复生成。
-
-**演示重点：** 多人对话后，AI 代理人自动在聊天室中弹出对话总结摘要。
-<img width="1905" height="901" alt="image" src="https://github.com/user-attachments/assets/55ace331-de8b-4d05-9b89-5f015c8f81f1" />
-
-
-
-
----
-
-### 🎬 功能四：多角色权限与数据导出
-
-**特点：**  
-- 完整的登录注册体系（Flask-Login + SQLAlchemy），支持会话持久化  
-- 管理员页面可导出：**注册用户名单**（Excel，含注册时间统计 Sheet）、**聊天室完整记录**（Excel，图片直接嵌入单元格，80×80px）、**编程问答记录**（含 MD5 去重，自动清理 24h 前记录）  
-- 聊天室支持图片上传（16MB 限制，格式白名单校验），图片以时间戳+随机串命名存储
-
-<img width="1905" height="879" alt="image" src="https://github.com/user-attachments/assets/0d72ca9e-5c52-4133-9d6c-308cefcc99a0" />
-
-
-
----
-
-## 3. 技术亮点
-
-**数据一致性保证：** 采用 `hashlib.md5` 对聊天记录进行去重（key 为 `user_id + question + answer` 的哈希值），防止前端重复提交；SQLite 使用绝对路径 + 连接池 `pool_pre_ping`，确保跨环境数据库稳定访问。
-
-**内存 + 数据库双写架构：** 聊天室消息采用"写时双存"策略——每条消息同时写入 SQLite 数据库（`chat_messages` 表）和内存字典（`chat_rooms`）。内存保证实时读取性能，数据库保障持久化；服务重启时自动从数据库恢复最近 12 小时的聊天记录到内存
-
-**双组实验设计：**  智能体根据房间号划分实验组（001-009）与对照组（010-016），分别加载不同 Prompt 策略，支持从 `.docx` 文件动态上传更新提示词，无需重启服务。
-
-**本地化模型部署：** SentenceTransformer 采用本地绝对路径加载（`pretrained_model/` 目录），向量化全程不依赖外部 API，保障实验数据隐私安全。
-
-**自动运维机制：** 三条守护线程分别负责总结生成、聊天记录清理（48h）、日志文件清理（5MB 上限），系统可长期无人值守稳定运行。
-
-**代理人开关控制：** 管理员可通过接口对任意聊天室独立关闭元认知代理人（SSRL），关闭后该房间的后台总结线程跳过，满足不同实验条件的控制需求。
-
+1. **端到端 RAG 流水线**：从文档上传、解析分块、本地向量化、FAISS 索引构建到 LLM 增强检索的全链路自研实现
+2. **双智能体协作**：认知智能体负责知识问答，元认知智能体负责高阶思维引导，形成教学闭环
+3. **语义实时检测**：基于 Embedding 余弦相似度的关键词检测系统，无需额外 NLP 服务
+4. **轻量化架构**：单 SQLite + 本地 Embedding 模型 + FAISS，无需外部中间件即可运行，适合教育场景低成本部署
+5. **教育实验支持**：房间分组、动态 Prompt 加载、定时摘要生成，满足教育实验研究需求
+6. **前后端分离**：Vue 3 SPA + FastAPI 纯 API 后端，职责清晰，易于扩展
 ---
