@@ -280,7 +280,7 @@ backend/
 └────────────────────────────────────────┘
 ```
 
-- **无容器化**：未使用 Docker，手动部署
+- **容器化**：使用 Docker
 - **开发模式**：`uvicorn app.main:app --reload`
 - **前端构建**：`vite build` → `dist/` 目录
 
