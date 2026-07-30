@@ -1,0 +1,33 @@
+# Python虚拟环境
+backend/.venv/
+
+# Python缓存
+__pycache__/
+*.pyc
+
+
+# 环境配置
+.env
+backend/.env
+vue3Project/.env
+
+
+# Vue依赖
+vue3Project/node_modules/
+
+# Vue打包文件
+vue3Project/dist/
+
+
+# IDE
+.idea/
+
+
+# 日志
+*.log
+
+
+# 数据文件
+backend/data/
+backend/storage/
+backend/uploads/
