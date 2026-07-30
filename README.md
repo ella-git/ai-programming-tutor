@@ -3,9 +3,6 @@
 # 基于 RAG 架构的智能协作与元认知辅助系统
 
 > **体验地址**  
-> 已经实现部署，http://39.96.180.126:5000/communication（体验地址，账号密码：admin）
-<img width="1920" height="905" alt="image" src="https://github.com/user-attachments/assets/fb5e3c4d-07de-4d31-9097-fa97b943a68b" />
-
 ## 一、总体架构概览
 
 ```
